@@ -1,0 +1,2 @@
+# mask_rcnn_hog
+A simple repo of Mask R-CNN with Histogram of Gradient(HOG). The goal is to re-identify pedestrians by using Mask R-CNN for object detection and then use HOG for feature extraction after that then compare the HOG of the newly pedestrian detected with those detected previously. If the newly detected pedestrian isn't among the previously detected then assign a new ID (or identification). 
