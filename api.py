@@ -5,7 +5,7 @@ import time
 from imutils.video import FPS
 import argparse
 import glob
-
+import os
 
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
@@ -15,14 +15,8 @@ ap.add_argument("-u", "--use-gpu", type=bool, default=0,
 ap.add_argument("-d", "--dataset", required=True, help="Path to the directory of images")
 args = vars(ap.parse_args())
 
-
-
 # Generate random colors(80 colors equals to detectable classes of the model, 3 is the number of channels)
 colors = np.random.randint(0, 255, (80, 3))
-
-
-
-
 
 # Loading Mask RCNN
 net = cv2.dnn.readNetFromTensorflow(
@@ -45,28 +39,27 @@ rs = RealsenseCamera()
 
 fps = FPS().start()
 
-known_pedestrian_encondings = []
-IDs = []
-index = {}
 images = {}
 
 def hog():
     # loop over the images paths
-    
+    hist = []
+    index = {}
     for imagePath in glob.glob(args["dataset"] + "\*.jpg"):
         # extract the image filename (assumed to be unique)
         # load the image, updating the images dictionary
-        filename = imagePath[imagePath.rfind("\\") + 1:]
+        fileName = imagePath[imagePath.rfind("\\") + 1:]
         image = cv2.imread(imagePath)
-        images[filename] = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        images[fileName] = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # extract a 3D RFB color histogram from image,
         # using 8 bins per channel, normalize, and update the index
 
         hist = cv2.calcHist([image], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-        hist = cv2.normalize(hist, hist, alpha=0, beta=1, normType=cv2.NORM_MINMAX).flatten()
-        index[filename] = hist
-    return hist
+        hist = cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX).flatten()
+        fileName = int(os.path.split(fileName)[1].split('.')[0])
+        index[fileName] = hist
+    return hist, index
         # print(hist.shape)
 
 
@@ -85,7 +78,7 @@ while True:
 
     hog_results = {}
 
-    hist = hog()
+    hist, index = hog()
 
     # Create a background image
     background = np.zeros((height, width, 3), np.uint8)
@@ -130,7 +123,6 @@ while True:
             # Get the mask
             mask = masks[i, int(class_id)]
             mask = cv2.resize(mask, (roi_width, roi_height))
-            # _, mask = cv2.threshold(mask, 0.5, 255, cv2.THRESH_BINARY)
             mask = (mask > 0.5)
             
             mask = np.stack((mask,) * 3, axis = -1)
@@ -139,44 +131,42 @@ while True:
             mask_show = np.invert(bg)
             mask_img = roi * mask
             result = mask_img + bg
-            # final = np.concatenate([roi, result], axis=1)
 
             new_ped_descriptor = cv2.calcHist([result], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
             new_ped_descriptor = cv2.normalize(new_ped_descriptor, new_ped_descriptor).flatten()
 
-            if known_pedestrian_encondings != []:
+            if hist != []:
                 for (k, hist) in index.items():
                     d = cv2.compareHist(new_ped_descriptor, hist, cv2.HISTCMP_BHATTACHARYYA)
+                    # There is a bug here that needs to be fixes
                     hog_results[k] = d
 
                 hog_results = sorted([(v, k) for (k, v) in hog_results.items()])
                 min_index = np.argmin(hog_results)
                 min_distance = hog_results[min_index]
-                print(min_distance)
 
                 if min_distance[0] <= 0.5:
                     print("Old pedestrian detected")
-                    ID = IDs[min_index]
+                    pred = "Prev. Pers. Det"
                 else:
                     print("New pedestrian detected")
-                    ID = len(IDs) + 1
-                    known_pedestrian_encondings.append(new_ped_descriptor)
+                    ID = len(index) + 1
+                    print(ID)
+                    hist = np.concatenate(
+                            (hist, new_ped_descriptor), axis=0)
                     fileName = "dataset/" + str(ID) + ".jpg"
-                    cv2.imwrite(fileName, result)
-                    index[ID - 1] = fileName
+                    cv2.imwrite(fileName, result)    
+                    pred = "New. Pers. Det"                
             else:
-                ID = len(IDs) +  1
-                known_pedestrian_encondings.append(new_ped_descriptor)
-                IDs.append(ID)
+                print("New pedestrian detected")
+                ID = len(index) +  1
+                print(ID)
+                hist = new_ped_descriptor
                 fileName = "dataset/" + str(ID) + ".jpg"
                 cv2.imwrite(fileName, result)
-            
-            ID = str(ID)
+                pred = "New. Pers. Det"
             y = y - 15 if y - 15 > 15 else y + 15
-            cv2.putText(bgr_frame, ID, (x + 6, y), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
-            
-        
-        
+            cv2.putText(bgr_frame, pred, (x + 6, y), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
 
     # print(box)
 
